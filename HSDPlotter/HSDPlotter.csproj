@@ -33,6 +33,9 @@
     <WarningLevel>4</WarningLevel>
   </PropertyGroup>
   <ItemGroup>
+    <Reference Include="KdTreeLib, Version=1.4.1.0, Culture=neutral, processorArchitecture=MSIL">
+      <HintPath>..\packages\KdTree.1.4.1\lib\net471\KdTreeLib.dll</HintPath>
+    </Reference>
     <Reference Include="SharpCompress, Version=0.26.0.0, Culture=neutral, PublicKeyToken=afb0a02973931d96, processorArchitecture=MSIL">
       <HintPath>packages\SharpCompress.0.26.0\lib\net46\SharpCompress.dll</HintPath>
     </Reference>
@@ -62,6 +65,7 @@
   <ItemGroup>
     <Compile Include="HSDReader.cs" />
     <Compile Include="Plotter.cs" />
+    <Compile Include="Projection.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
   </ItemGroup>
   <ItemGroup>

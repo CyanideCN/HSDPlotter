@@ -151,9 +151,15 @@ namespace HSDPlotter
     {
         private readonly BinaryReader br;
         private MemoryStream content;
-        public double[] data;
+        public float[,] data;
         public int ncol;
         public int nline;
+        public Block01 b01;
+        public Block02 b02;
+        public Block03 b03;
+        public Block04 b04;
+        public Block06 b06;
+        public Block07 b07;
         public static T ByteToType<T>(BinaryReader reader)
         {
             byte[] bytes = reader.ReadBytes(Marshal.SizeOf(typeof(T)));
@@ -187,10 +193,10 @@ namespace HSDPlotter
             }
             content.Seek(0, SeekOrigin.Begin);
             br = new BinaryReader(content);
-            var b01 = ByteToType<Block01>(br);
-            var b02 = ByteToType<Block02>(br);
-            var b03 = ByteToType<Block03>(br);
-            var b04 = ByteToType<Block04>(br);
+            b01 = ByteToType<Block01>(br);
+            b02 = ByteToType<Block02>(br);
+            b03 = ByteToType<Block03>(br);
+            b04 = ByteToType<Block04>(br);
             var b05 = ByteToType<Block05>(br);
             Block05VIS? b05vis = null;
             Block05IR? b05ir = null;
@@ -202,8 +208,8 @@ namespace HSDPlotter
             {
                 b05ir = ByteToType<Block05IR>(br);
             }
-            var b06 = ByteToType<Block06>(br);
-            var b07 = ByteToType<Block07>(br);
+            b06 = ByteToType<Block06>(br);
+            b07 = ByteToType<Block07>(br);
             // Leap rest header blocks
             int leap_block_num = 4;
             for (int i = 0; i < leap_block_num; i++)
@@ -214,11 +220,13 @@ namespace HSDPlotter
             }
             ncol = b02.NCols;
             nline = b02.NLines;
-            var npixels = ncol * nline;
-            int[] dn = new int[npixels];
-            for (int i = 0; i < npixels; i++)
+            int[,] dn = new int[nline, ncol];
+            for (int i = 0; i < nline; i++)
             {
-                dn[i] = br.ReadInt16();
+                for (int j = 0; j < ncol; j++)
+                {
+                    dn[i, j] = br.ReadInt16();
+                }
             }
             if (b05.BandNum <= 6)
             {
@@ -230,11 +238,47 @@ namespace HSDPlotter
             }
         }
 
-        private static double[] CalibrateIR(int[] dn, Block05 b05, Block05IR? blockornull)
+        public void GetLonLat(ref float[,] lon, ref float[,] lat)
+        {
+            var DEG2RAD = Math.PI / 180;
+            var RAD2DEG = 180 / Math.PI;
+            var SCLUNIT = Math.Pow(2.0, -16);
+            var DIS = b03.Rs;
+            var CON = b03.Const3;
+            var COFF = b03.COFF;
+            var CFAC = b03.CFAC;
+            var LOFF = b03.LOFF;
+            var LFAC = b03.LFAC;
+            var first_line_num = b07.FirstLineNum;
+            //float[,] lon = new float[nline, ncol];
+            for (int i = 0; i < nline; i++)
+            {
+                for (int j = 0; j < ncol; j++)
+                {
+                    var x = first_line_num + i;
+                    var y = j;
+                    var xx = DEG2RAD * (x - COFF) / (SCLUNIT * CFAC);
+                    var yy = DEG2RAD * (y - LOFF) / (SCLUNIT * LFAC);
+                    var Sd = Math.Sqrt(Math.Pow(DIS * Math.Cos(xx) * Math.Cos(yy), 2) -
+                        (Math.Pow(Math.Cos(yy), 2) + CON * Math.Pow(Math.Sin(yy), 2)) * b03.ConstStd);
+                    var Sn = (DIS * Math.Cos(xx) * Math.Cos(yy) - Sd) / (Math.Pow(Math.Cos(yy), 2)
+                        + CON * Math.Pow(Math.Sin(yy), 2));
+                    var S1 = DIS - Sn * Math.Cos(xx) * Math.Cos(yy);
+                    var S2 = Sn * Math.Sin(xx) * Math.Cos(yy);
+                    var S3 = -Sn * Math.Sin(yy);
+                    var Sxy = Math.Sqrt(Math.Pow(S1, 2) + Math.Pow(S2, 2));
+                    lon[i, j] = (float)(RAD2DEG * Math.Atan2(S2, S1) + b03.SubLon);
+                    lat[i, j] = (float)(RAD2DEG * Math.Atan(CON * S3 / Sxy));
+                }
+            }
+        }
+
+        private static float[,] CalibrateIR(int[,] dn, Block05 b05, Block05IR? blockornull)
         {
             var cal = (Block05IR)blockornull;
-            var length = dn.Length;
-            double[] data = new double[length];
+            int xdim = dn.GetLength(0);
+            int ydim = dn.GetLength(1);
+            float[,] data = new float[xdim, ydim];
             var lam = b05.CentralWaveLength * 1e-6;
             var gain = b05.Gain;
             var constant = b05.Constant;
@@ -243,26 +287,33 @@ namespace HSDPlotter
             var c2 = cal.c2;
             var const1 = cal.h * cal.c / (cal.k * lam);
             var const2 = 2 * cal.h * Math.Pow(cal.c, 2) * Math.Pow(lam, -5);
-            for (int i = 0; i < length; i++)
+            for (int i = 0; i < xdim; i++)
             {
-                var I = (gain * dn[i] + constant) * 1e6;
-                var EBT = const1 / Log1p(const2 / I);
-                data[i] = c0 + c1 * EBT + c2 * Math.Pow(EBT, 2) - 273.15;
+                for (int j = 0; j < ydim; j++)
+                {
+                    var I = (gain * dn[i, j] + constant) * 1e6;
+                    var EBT = const1 / Log1p(const2 / I);
+                    data[i, j] = (float)(c0 + c1 * EBT + c2 * Math.Pow(EBT, 2) - 273.15);
+                }
             }
             return data;
         }
 
-        private static double[] CalibrateVIS(int[] dn, Block05 b05, Block05VIS? blockornull)
+        private static float[,] CalibrateVIS(int[,] dn, Block05 b05, Block05VIS? blockornull)
         {
             var gain = b05.Gain;
             var constant = b05.Constant;
             var cal = (Block05VIS)blockornull;
             var c = cal.c;
-            var length = dn.Length;
-            double[] data = new double[length];
-            for (int i = 0; i < length; i++)
+            int xdim = dn.GetLength(0);
+            int ydim = dn.GetLength(1);
+            float[,] data = new float[xdim, ydim];
+            for (int i = 0; i < xdim; i++)
             {
-                data[i] = c * gain * dn[i] + c * constant;
+                for (int j = 0; j < ydim; j++)
+                {
+                    data[i, j] = (float)(c * gain * dn[i, j] + c * constant);
+                }
             }
             return data;
         }
